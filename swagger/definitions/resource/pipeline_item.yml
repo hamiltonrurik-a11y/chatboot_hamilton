@@ -1,5 +1,9 @@
 type: object
 properties:
+  updated_at_usec:
+    type: integer
+    format: int64
+    description: Update timestamp in Unix microseconds, used to reject stale realtime events. Existing updated_at remains Unix seconds.
   id:
     type: number
     description: The ID of the pipeline item
