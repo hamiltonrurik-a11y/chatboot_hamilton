@@ -111,7 +111,9 @@ class ReconnectService {
 
   handleRouteSpecificFetch = async () => {
     const currentRoute = this.router.currentRoute.value.name;
-    if (isAConversationRoute(currentRoute, true)) {
+    if (currentRoute === 'kanban_index') {
+      await this.store.dispatch('kanban/refreshLoadedBoard');
+    } else if (isAConversationRoute(currentRoute, true)) {
       await this.fetchConversationsOnReconnect();
       await this.fetchConversationMessagesOnReconnect();
     } else if (isAInboxViewRoute(currentRoute, true)) {
