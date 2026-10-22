@@ -113,6 +113,7 @@ class PipelineItem < ApplicationRecord
       conversation_id: conversation_id,
       created_at: created_at.to_i,
       updated_at: updated_at.to_i,
+      updated_at_usec: (updated_at.to_r * 1_000_000).to_i,
       contact: contact_push_event_data,
       assignee: assignee&.push_event_data,
       team: team&.push_event_data,
@@ -188,7 +189,8 @@ class PipelineItem < ApplicationRecord
   # Broader than saved_change_to_pipeline_stage_id? on purpose - see PIPELINE_ITEM_UPDATED's
   # comment in lib/events/types.rb.
   def broadcast_relevant_change?
-    saved_change_to_pipeline_stage_id? || saved_change_to_assignee_id? || saved_change_to_team_id?
+    visible_attributes = %w[pipeline_stage_id assignee_id team_id title value notes position conversation_id custom_attributes pipeline_lost_reason_id]
+    previous_changes.keys.intersect?(visible_attributes) || saved_change_to_label_list?
   end
 
   def dispatch_updated_event
