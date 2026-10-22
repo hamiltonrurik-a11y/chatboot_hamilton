@@ -7,6 +7,104 @@ import { useLostReasonPrompt } from 'dashboard/composables/useLostReasonPrompt';
 import { throwErrorMessage } from '../../utils/api';
 import { itemMatchesActiveFilters, buildKanbanQueryParams } from './getters';
 
+// Keep request/timer bookkeeping outside Vuex. A new view gets a new scope, so a
+// late response cannot replace the board after a pipeline, filter or sort change.
+const boardSync = new WeakMap();
+const REFRESH_DELAY = 150;
+
+function syncScope(state) {
+  const key = JSON.stringify([
+    state.activePipelineId,
+    buildKanbanQueryParams(state),
+  ]);
+  let scope = boardSync.get(state);
+  if (scope?.key !== key) {
+    if (scope?.timer) clearTimeout(scope.timer);
+    scope = {
+      key,
+      pending: new Set(),
+      requests: new Map(),
+      revisions: new Map(),
+      itemVersions: new Map(),
+      timer: null,
+    };
+    boardSync.set(state, scope);
+  }
+  return scope;
+}
+
+function flushPending(context) {
+  const { state, dispatch } = context;
+  const scope = syncScope(state);
+  if (!scope.pending.size || scope.timer) return;
+  scope.timer = setTimeout(() => {
+    scope.timer = null;
+    if (syncScope(state) !== scope) return;
+    [...scope.pending].forEach(stageId => {
+      if (state.stageItems[stageId]?.isFetching) return;
+      scope.pending.delete(stageId);
+      dispatch('refreshStageItems', {
+        pipelineId: state.activePipelineId,
+        stageId,
+      });
+    });
+  }, REFRESH_DELAY);
+}
+
+function queueStageRefresh(context, stageIds) {
+  const scope = syncScope(context.state);
+  new Set(stageIds).forEach(stageId => {
+    if (!context.state.stageItems[stageId]) return;
+    scope.pending.add(stageId);
+    scope.revisions.set(stageId, (scope.revisions.get(stageId) || 0) + 1);
+  });
+  flushPending(context);
+}
+
+function stageRequest(context, stageId) {
+  const { state, commit } = context;
+  const scope = syncScope(state);
+  const token = Symbol('stage request');
+  const revision = scope.revisions.get(stageId);
+  scope.pending.delete(stageId);
+  scope.requests.set(stageId, token);
+  const ownsRequest = () =>
+    syncScope(state) === scope && scope.requests.get(stageId) === token;
+  return {
+    current: () => ownsRequest() && scope.revisions.get(stageId) === revision,
+    finish: () => {
+      if (!ownsRequest()) return;
+      commit('SET_STAGE_FETCHING', { stageId, isFetching: false });
+      flushPending(context);
+    },
+  };
+}
+
+function isStalePush(state, item) {
+  const scope = syncScope(state);
+  const existing = state.items[item.id];
+  const incoming = item.updated_at_usec || (item.updated_at || 0) * 1000000;
+  const stored = Math.max(
+    scope.itemVersions.get(item.id) || 0,
+    existing?.updated_at_usec || (existing?.updated_at || 0) * 1000000
+  );
+  if (
+    incoming &&
+    (incoming < stored || (item.updated_at_usec && incoming === stored))
+  ) {
+    return true;
+  }
+  if (incoming) {
+    scope.itemVersions.delete(item.id);
+    scope.itemVersions.set(item.id, incoming);
+    // Only recent unloaded pushes need this cache; loaded cards also carry their version.
+    if (scope.itemVersions.size > 5000) {
+      scope.itemVersions.delete(scope.itemVersions.keys().next().value);
+    }
+  }
+  return false;
+}
+
 // Where a card that a realtime push just moved into a stage belongs in that stage's loaded list
 // (task 28), or null when it can't be placed there. The list is a prefix of the server's order,
 // and that order is only `(position, id)` when the manual sort is active - for any other sort
@@ -17,7 +115,8 @@ import { itemMatchesActiveFilters, buildKanbanQueryParams } from './getters';
 // Positions come from `state.items`, which isn't refreshed for cards someone else reordered, so
 // the slot can be off by a few places after manual reorders; the next fetch corrects it.
 function realtimeInsertIndex(state, item) {
-  if (state.activeSort.field !== 'position') return null;
+  if (state.activeSort.field !== 'position' || state.activeSort.order !== 'asc')
+    return null;
 
   const stage = state.stageItems[item.pipeline_stage_id];
   const ids = stage?.ids || [];
@@ -49,7 +148,10 @@ export const actions = {
   // and one column's rejection must not take the others down with it or surface as an unhandled
   // rejection - it turns into a per-column error state instead (KanbanColumn.vue), which is also
   // how the column tells "failed to load" apart from "genuinely empty".
-  fetchStageItems: async ({ commit, state }, { pipelineId, stageId }) => {
+  fetchStageItems: async (context, { pipelineId, stageId }) => {
+    const { commit, state } = context;
+    if (state.activePipelineId !== pipelineId) return;
+    const request = stageRequest(context, stageId);
     commit('SET_STAGE_FETCHING', { stageId, isFetching: true });
     try {
       const { data } = await PipelinesAPI.getBoardItems(pipelineId, {
@@ -57,6 +159,7 @@ export const actions = {
         page: 1,
         ...buildKanbanQueryParams(state),
       });
+      if (!request.current()) return;
       commit('SET_STAGE_ITEMS_PAGE', {
         stageId,
         items: data.payload,
@@ -64,9 +167,10 @@ export const actions = {
         page: 1,
       });
     } catch {
-      commit('SET_STAGE_ERROR', { stageId, hasError: true });
+      if (request.current())
+        commit('SET_STAGE_ERROR', { stageId, hasError: true });
     } finally {
-      commit('SET_STAGE_FETCHING', { stageId, isFetching: false });
+      request.finish();
     }
   },
 
@@ -74,10 +178,18 @@ export const actions = {
   // load - the IntersectionObserver driving this (task 06) can fire more than once in a row.
   // Same error handling as fetchStageItems (task 21) - a failed "load more" leaves the already-
   // loaded cards on screen and marks the column so the observer stops retrying in a loop.
-  fetchMoreStageItems: async ({ commit, state }, { pipelineId, stageId }) => {
+  fetchMoreStageItems: async (context, { pipelineId, stageId }) => {
+    const { commit, state } = context;
     const current = state.stageItems[stageId];
-    if (!current || current.isFetching || !current.hasMore) return;
+    if (
+      state.activePipelineId !== pipelineId ||
+      !current ||
+      current.isFetching ||
+      !current.hasMore
+    )
+      return;
 
+    const request = stageRequest(context, stageId);
     commit('SET_STAGE_FETCHING', { stageId, isFetching: true });
     try {
       const nextPage = current.page + 1;
@@ -86,6 +198,7 @@ export const actions = {
         page: nextPage,
         ...buildKanbanQueryParams(state),
       });
+      if (!request.current()) return;
       commit('APPEND_STAGE_ITEMS_PAGE', {
         stageId,
         items: data.payload,
@@ -93,10 +206,67 @@ export const actions = {
         page: nextPage,
       });
     } catch {
-      commit('SET_STAGE_ERROR', { stageId, hasError: true });
+      if (request.current())
+        commit('SET_STAGE_ERROR', { stageId, hasError: true });
     } finally {
-      commit('SET_STAGE_FETCHING', { stageId, isFetching: false });
+      request.finish();
     }
+  },
+
+  // Reload the loaded prefix atomically in server order. Do not collapse a column
+  // back to page 1 or fetch the entire pipeline on every incoming message.
+  refreshStageItems: async (context, { pipelineId, stageId }) => {
+    const { commit, state } = context;
+    if (state.activePipelineId !== pipelineId) return;
+    const current = state.stageItems[stageId];
+    if (!current) return;
+    if (current.isFetching) {
+      queueStageRefresh(context, [stageId]);
+      return;
+    }
+    const pages = Math.max(1, current.page);
+    const params = buildKanbanQueryParams(state);
+    const request = stageRequest(context, stageId);
+    commit('SET_STAGE_FETCHING', { stageId, isFetching: true });
+    try {
+      let items = [];
+      let count = 0;
+      let page = 0;
+      while (page < pages) {
+        page += 1;
+        // Sequential requests keep each refresh bounded to one request in flight per column.
+        // eslint-disable-next-line no-await-in-loop
+        const { data } = await PipelinesAPI.getBoardItems(pipelineId, {
+          stage_id: stageId,
+          page,
+          ...params,
+        });
+        if (!request.current()) return;
+        items = [...items, ...data.payload];
+        count = data.meta.count;
+        if (!data.payload.length || items.length >= count) break;
+      }
+      items = [...new Map(items.map(item => [item.id, item])).values()];
+      commit('SET_STAGE_ITEMS_PAGE', { stageId, items, count, page });
+    } catch {
+      if (request.current())
+        commit('SET_STAGE_ERROR', { stageId, hasError: true });
+    } finally {
+      request.finish();
+    }
+  },
+
+  refreshLoadedBoard: async ({ dispatch, state }) => {
+    const pipelineId = state.activePipelineId;
+    if (!pipelineId) return;
+    const stageIds = (state.stageOrder[pipelineId] || []).filter(
+      stageId => state.stageItems[stageId]
+    );
+    await Promise.all(
+      stageIds.map(stageId =>
+        dispatch('refreshStageItems', { pipelineId, stageId })
+      )
+    );
   },
 
   // Refetches page 1 of every column of the active pipeline - used on initial load, pipeline
@@ -368,35 +538,19 @@ export const actions = {
     return data;
   },
 
-  // Applies a pipeline_item.created/pipeline_item.updated ActionCable push. Both events map to
-  // this same handler (see actionCable.js), so it can't tell a create from an update - the
-  // three cases below are decided explicitly (task 05, risk 3 - "ActionCable"):
-  //
-  //   - item already loaded here: if it no longer matches the active filters (e.g. assignee
-  //     changed away from the one being filtered on), drop it from its (loaded) stage's
-  //     list/count - it still exists, just not in this filtered view. Otherwise update its
-  //     fields, and if it changed stage, move it between the two loaded lists (adjusting both
-  //     counts) at the slot the card's `position` gives it (task 28, see realtimeInsertIndex) -
-  //     or, when that slot can't be known, out of the old list and into the new stage's count
-  //     as an unloaded card.
-  //   - item not loaded (created elsewhere, or sitting on a page this column hasn't fetched):
-  //     never insert it into a list - only reconcile the destination stage's count, idempotently
-  //     per id (task 18: a bulk macro can push several updates for the same unloaded card, and
-  //     naively adding 1 every time inflates the badge - SET_UNLOADED_ITEM_COUNTED tracks which
-  //     unloaded ids are currently counted so the same transition can't apply twice, and also so
-  //     a create's REST response racing in after this push doesn't double-count it, see SET_ITEM).
-  //     It appears once the agent scrolls to/refetches that page.
-  //     If this is an update that moved an unloaded item OUT of another stage, that source
-  //     stage's count is given back too (task 27), from two sources: the stages already counting
-  //     this id (SET_UNLOADED_ITEM_COUNTED tracks them), and the `previous_pipeline_stage_id` the
-  //     updated push carries (ActionCableListener#pipeline_item_updated) for a card no push had
-  //     been seen for. Remaining, accepted gaps: (a) with a filter active, the previous stage is
-  //     not trusted (see below), so only the tracked path applies; (b) a `pipeline_item.created`
-  //     for a card that left its stage before this client saw it has no previous stage. Both
-  //     self-heal on the next page-1 fetch of that stage (count always comes fresh from
-  //     meta.count there).
-  applyRealtimePipelineItem: ({ commit, state, rootGetters }, item) => {
+  // Apply known fields immediately, then reconcile the affected columns from the
+  // server. Reloading handles new/unloaded cards, filters and every sort without
+  // guessing their rank or collapsing the pages the agent has already opened.
+  applyRealtimePipelineItem: (context, item) => {
+    const { commit, state, rootGetters } = context;
     if (state.activePipelineId !== item.pipeline_id) return;
+    if (isStalePush(state, item)) return;
+
+    queueStageRefresh(context, [
+      item.pipeline_stage_id,
+      item.previous_pipeline_stage_id,
+      state.items[item.id]?.pipeline_stage_id,
+    ]);
 
     const currentUserId = rootGetters.getCurrentUserID;
     const stillMatches = itemMatchesActiveFilters(state, item, currentUserId);
