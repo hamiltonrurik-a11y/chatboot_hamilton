@@ -1,6 +1,17 @@
 {
   "KANBAN": {
     "TITLE": "Pipeline",
+    "DAILY_SUMMARY": {
+      "TITLE": "Today's conversations",
+      "DATE": "{date} · São Paulo",
+      "ATTENDANCES": "Conversations today",
+      "SALES": "Recorded purchases",
+      "REVENUE": "Known total value",
+      "UNAVAILABLE_VALUE": "—",
+      "UNAVAILABLE": "Today's data is not available yet.",
+      "UPDATED_AT": "Updated at {time}.",
+      "UNKNOWN_SALES": "Purchases awaiting a final amount: {count}."
+    },
     "EMPTY_STATE": {
       "TITLE": "No pipelines yet",
       "DESCRIPTION": "Create your first pipeline to organize and manage your opportunities.",
