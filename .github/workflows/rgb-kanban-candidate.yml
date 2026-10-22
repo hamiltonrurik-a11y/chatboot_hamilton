@@ -24,7 +24,7 @@ env:
 
 jobs:
   javascript:
-    name: Kanban and reconnect JavaScript
+    name: Kanban, daily summary and reconnect JavaScript
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -56,7 +56,11 @@ jobs:
           app/javascript/dashboard/helper/specs/ReconnectService.spec.js
           app/javascript/dashboard/store/modules/kanban/actions.js
           app/javascript/dashboard/store/modules/kanban/specs/actions.spec.js
-      - name: Run the three relevant suites (58 tests at the reviewed revision)
+          app/javascript/dashboard/api/conversations.js
+          app/javascript/dashboard/routes/dashboard/kanban/pages/KanbanIndex.vue
+          app/javascript/dashboard/routes/dashboard/kanban/components/KanbanDailySummary.vue
+          app/javascript/dashboard/routes/dashboard/kanban/helpers/dailySummary.js
+      - name: Run the existing Kanban and reconnect suites
         run: >-
           pnpm exec vitest run --no-cache --no-coverage --minWorkers=1 --maxWorkers=2
           app/javascript/dashboard/helper/specs/ReconnectService.spec.js
@@ -66,7 +70,7 @@ jobs:
         run: git diff --exit-code -- package.json pnpm-lock.yaml
 
   ruby:
-    name: Pipeline model and ActionCable listener Ruby
+    name: Pipeline, account authorization and listener Ruby
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -132,13 +136,32 @@ jobs:
           ruby -ruri -e 'u = URI(ENV.fetch("DATABASE_URL")); abort "Unsafe test database" unless ENV["RAILS_ENV"] == "test" && u.host == "127.0.0.1" && u.path == "/chatboot_kanban_ci"'
       - name: Prepare only the isolated test database
         run: bundle exec rails db:prepare
+      - name: Reset only the disposable signup configuration used by request specs
+        run: |
+          bundle exec rails runner '
+            config = ActiveRecord::Base.connection_db_config.configuration_hash
+            abort "Unsafe signup fixture database" unless Rails.env.test? && config[:host] == "127.0.0.1" && config[:database] == "chatboot_kanban_ci"
+            InstallationConfig.where(name: "ENABLE_ACCOUNT_SIGNUP").delete_all
+            GlobalConfig.clear_cache
+          '
       - name: Check Ruby syntax
-        run: bundle exec ruby -c app/models/pipeline_item.rb
-      - name: Test model broadcasts and listener account/member scope
+        run: |
+          bundle exec ruby -c app/models/pipeline_item.rb
+          bundle exec ruby -c app/controllers/api/v1/accounts_controller.rb
+          bundle exec ruby -c app/views/api/v1/models/_account.json.jbuilder
+      - name: Lint account configuration controller and serialization
+        run: >-
+          bundle exec rubocop
+          app/controllers/api/v1/accounts_controller.rb
+          app/views/api/v1/models/_account.json.jbuilder
+      - name: Build OpenAPI from the changed source schemas before Skooma checks
+        run: bundle exec rails swagger:build
+      - name: Test broadcasts, account authorization and listener scope
         run: >-
           bundle exec rspec
           spec/models/pipeline_item_spec.rb
           spec/listeners/action_cable_listener_spec.rb
+          spec/controllers/api/v1/accounts_controller_spec.rb
           --format progress
       - name: Confirm dependency lockfile was not changed
         run: git diff --exit-code -- Gemfile Gemfile.lock
