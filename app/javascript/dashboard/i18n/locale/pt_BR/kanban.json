@@ -1,6 +1,17 @@
 {
   "KANBAN": {
     "TITLE": "Pipeline",
+    "DAILY_SUMMARY": {
+      "TITLE": "Atendimentos do dia",
+      "DATE": "{date} · São Paulo",
+      "ATTENDANCES": "Atendimentos do dia",
+      "SALES": "Compras registradas",
+      "REVENUE": "Valor total conhecido",
+      "UNAVAILABLE_VALUE": "—",
+      "UNAVAILABLE": "Os dados de hoje ainda não estão disponíveis.",
+      "UPDATED_AT": "Atualizado às {time}.",
+      "UNKNOWN_SALES": "Compras com valor final a conferir: {count}."
+    },
     "EMPTY_STATE": {
       "TITLE": "Nenhum pipeline ainda",
       "DESCRIPTION": "Crie seu primeiro pipeline para organizar e gerenciar suas oportunidades.",
