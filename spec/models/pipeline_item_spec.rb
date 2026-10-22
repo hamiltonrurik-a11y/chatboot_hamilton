@@ -182,10 +182,33 @@ RSpec.describe PipelineItem do
               pipeline_item: item, performed_by: nil, changed_attributes: kind_of(Hash))
     end
 
-    it 'does not dispatch PIPELINE_ITEM_UPDATED for updates that do not touch stage/assignee/team' do
+    it 'dispatches PIPELINE_ITEM_UPDATED when visible card fields change without moving stage' do
       item = create(:pipeline_item, pipeline_stage: stage, account: account, contact: contact)
 
-      item.update!(title: 'Updated title')
+      item.update!(title: 'Updated title', value: 150, notes: 'Confirmed order', custom_attributes: { 'status' => 'confirmed' })
+
+      expect(Rails.configuration.dispatcher).to have_received(:dispatch)
+        .with(Events::Types::PIPELINE_ITEM_UPDATED, kind_of(Time),
+              pipeline_item: item, performed_by: nil, changed_attributes: kind_of(Hash))
+      expect(Rails.configuration.dispatcher).not_to have_received(:dispatch)
+        .with(Events::Types::PIPELINE_ITEM_STAGE_CHANGED, anything, anything)
+    end
+
+    it 'dispatches PIPELINE_ITEM_UPDATED for label changes used by board filters' do
+      create(:label, account: account, title: 'priority', label_type: :pipeline_label)
+      item = create(:pipeline_item, pipeline_stage: stage, account: account, contact: contact)
+
+      item.update!(label_list: ['priority'])
+
+      expect(Rails.configuration.dispatcher).to have_received(:dispatch)
+        .with(Events::Types::PIPELINE_ITEM_UPDATED, kind_of(Time),
+              pipeline_item: item, performed_by: nil, changed_attributes: kind_of(Hash))
+    end
+
+    it 'does not dispatch PIPELINE_ITEM_UPDATED for internal stale-alert bookkeeping alone' do
+      item = create(:pipeline_item, pipeline_stage: stage, account: account, contact: contact)
+
+      item.update!(stale_alert_sent_at: Time.current)
 
       expect(Rails.configuration.dispatcher).not_to have_received(:dispatch)
         .with(Events::Types::PIPELINE_ITEM_UPDATED, anything, anything)
@@ -210,6 +233,8 @@ RSpec.describe PipelineItem do
       expect(data[:pipeline_id]).to eq(pipeline.id)
       expect(data[:pipeline_name]).to eq(pipeline.name)
       expect(data[:pipeline_stage_name]).to eq(stage.name)
+      expect(data[:updated_at]).to eq(item.updated_at.to_i)
+      expect(data[:updated_at_usec]).to eq((item.updated_at.to_r * 1_000_000).to_i)
     end
 
     it 'builds the contact sub-hash with avatar_url (not Contact#push_event_data\'s thumbnail)' do
