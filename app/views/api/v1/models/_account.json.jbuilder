@@ -9,6 +9,9 @@ if resource.custom_attributes.present?
     json.industry resource.custom_attributes['industry'] if resource.custom_attributes['industry'].present?
     json.company_size resource.custom_attributes['company_size'] if resource.custom_attributes['company_size'].present?
     json.timezone resource.custom_attributes['timezone'] if resource.custom_attributes['timezone'].present?
+    if resource.custom_attributes['rgb_daily_summary_config'].present?
+      json.rgb_daily_summary_config resource.custom_attributes['rgb_daily_summary_config']
+    end
     json.logo resource.custom_attributes['logo'] if resource.custom_attributes['logo'].present?
     json.referral_source resource.custom_attributes['referral_source'] if resource.custom_attributes['referral_source'].present?
     json.brand_info resource.custom_attributes['brand_info'] if resource.custom_attributes['brand_info'].present?
