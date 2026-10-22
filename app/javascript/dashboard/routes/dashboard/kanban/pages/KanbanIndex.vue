@@ -13,6 +13,7 @@ import KanbanFilterBar from '../components/KanbanFilterBar.vue';
 import KanbanSortMenu from '../components/KanbanSortMenu.vue';
 import ExportItemModal from '../components/ExportItemModal.vue';
 import LostReasonModal from '../components/LostReasonModal.vue';
+import KanbanDailySummary from '../components/KanbanDailySummary.vue';
 
 const { t } = useI18n();
 const store = useStore();
@@ -63,6 +64,7 @@ const selectedCard = computed(() =>
 
 onMounted(async () => {
   store.dispatch('attributes/get');
+  store.dispatch('accounts/get', { silent: true });
   await store.dispatch('kanban/fetchPipelines');
   if (hasPipelines.value) {
     const targetPipelineId =
@@ -117,6 +119,11 @@ const closeExportModal = () => {
       <KanbanFilterBar v-if="activePipeline" />
       <KanbanSortMenu v-if="activePipeline" />
     </div>
+
+    <KanbanDailySummary
+      v-if="activePipeline"
+      :pipeline-id="activePipeline.id"
+    />
 
     <div
       v-if="uiFlags.isFetchingPipelines"
