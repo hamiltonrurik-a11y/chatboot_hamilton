@@ -75,6 +75,22 @@ properties:
       timezone:
         type: string
         description: Account timezone
+      rgb_daily_summary_config:
+        type: object
+        description: Account-scoped daily summary source configured by an administrator.
+        properties:
+          schema_version:
+            type: integer
+            enum: [1]
+          pipeline_id:
+            type: integer
+            minimum: 1
+          conversation_id:
+            type: integer
+            minimum: 1
+          timezone:
+            type: string
+            enum: ["America/Sao_Paulo"]
       logo:
         type: string
         description: Account logo URL
