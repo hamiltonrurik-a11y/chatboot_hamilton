@@ -136,6 +136,14 @@ jobs:
           ruby -ruri -e 'u = URI(ENV.fetch("DATABASE_URL")); abort "Unsafe test database" unless ENV["RAILS_ENV"] == "test" && u.host == "127.0.0.1" && u.path == "/chatboot_kanban_ci"'
       - name: Prepare only the isolated test database
         run: bundle exec rails db:prepare
+      - name: Reset only the disposable signup configuration used by request specs
+        run: |
+          bundle exec rails runner '
+            config = ActiveRecord::Base.connection_db_config.configuration_hash
+            abort "Unsafe signup fixture database" unless Rails.env.test? && config[:host] == "127.0.0.1" && config[:database] == "chatboot_kanban_ci"
+            InstallationConfig.where(name: "ENABLE_ACCOUNT_SIGNUP").delete_all
+            GlobalConfig.clear_cache
+          '
       - name: Check Ruby syntax
         run: |
           bundle exec ruby -c app/models/pipeline_item.rb
