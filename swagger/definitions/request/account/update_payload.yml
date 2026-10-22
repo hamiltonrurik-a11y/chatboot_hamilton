@@ -50,3 +50,20 @@ properties:
     type: string
     description: Account timezone
     example: "UTC"
+  rgb_daily_summary_config:
+    type: object
+    additionalProperties: false
+    description: Administrator-managed source for the daily summary of one pipeline. The referenced conversation remains subject to account and conversation permissions.
+    properties:
+      schema_version:
+        type: integer
+        enum: [1]
+      pipeline_id:
+        type: integer
+        minimum: 1
+      conversation_id:
+        type: integer
+        minimum: 1
+      timezone:
+        type: string
+        enum: ["America/Sao_Paulo"]
