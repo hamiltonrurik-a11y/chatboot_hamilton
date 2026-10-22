@@ -275,6 +275,15 @@ describe('ReconnectService', () => {
   });
 
   describe('handleRouteSpecificFetch', () => {
+    it('refreshes the loaded Kanban pages after reconnecting', async () => {
+      routerMock.currentRoute.value.name = 'kanban_index';
+      await reconnectService.handleRouteSpecificFetch();
+      expect(storeMock.dispatch).toHaveBeenCalledWith(
+        'kanban/refreshLoadedBoard'
+      );
+      routerMock.currentRoute.value.name = '';
+    });
+
     it('should fetch conversations and messages if current route is a conversation route', async () => {
       isAConversationRoute.mockReturnValue(true);
       const spyConversations = vi.spyOn(
