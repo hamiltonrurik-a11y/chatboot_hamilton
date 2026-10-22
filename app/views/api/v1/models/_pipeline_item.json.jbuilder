@@ -11,6 +11,7 @@ json.pipeline_stage_name resource.pipeline_stage.name
 json.conversation_id resource.conversation_id
 json.created_at resource.created_at.to_i
 json.updated_at resource.updated_at.to_i
+json.updated_at_usec (resource.updated_at.to_r * 1_000_000).to_i
 json.contact do
   json.id resource.contact.id
   json.name resource.contact.name
