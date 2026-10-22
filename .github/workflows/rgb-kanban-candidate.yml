@@ -58,7 +58,7 @@ jobs:
           app/javascript/dashboard/store/modules/kanban/specs/actions.spec.js
       - name: Run the three relevant suites (58 tests at the reviewed revision)
         run: >-
-          pnpm exec vitest run --no-cache --no-coverage --maxWorkers=2
+          pnpm exec vitest run --no-cache --no-coverage --minWorkers=1 --maxWorkers=2
           app/javascript/dashboard/helper/specs/ReconnectService.spec.js
           app/javascript/dashboard/store/modules/kanban/specs/actions.spec.js
           app/javascript/dashboard/store/modules/kanban/specs/getters.spec.js
